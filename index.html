@@ -127,6 +127,7 @@
             letter-spacing: 1px;
             box-shadow: 0 4px 15px rgba(29, 185, 84, 0.4);
             transition: background 0.2s;
+            display: inline-block;
         }
 
         .login-btn:hover {
@@ -149,7 +150,7 @@
     <!-- Login Prompt (Shown if not logged in) -->
     <div id="loginSection" class="login-prompt">
         <p style="margin-bottom: 15px; color: #888;">Connect your Spotify account to control playback on your Roku</p>
-        <a id="loginLink" href="#" class="login-btn">CONNECT SPOTIFY</a>
+        <button id="loginBtn" class="login-btn">CONNECT SPOTIFY</button>
     </div>
 
     <!-- Spotify Widget Container (Shown when logged in) -->
@@ -167,8 +168,8 @@
     </div>
 
     <script>
-        // ---- CONFIGURATION ----
         const CLIENT_ID = '9a4eb75b171544f9a7a2b641479edab7';
+        // Clean origin + pathname without query strings
         const REDIRECT_URI = window.location.origin + window.location.pathname;
         const SCOPES = 'user-read-playback-state user-modify-playback-state user-read-currently-playing';
 
@@ -176,19 +177,14 @@
         let refreshToken = localStorage.getItem('spotify_refresh_token');
         let isPlaying = false;
 
-        // ---- PKCE HELPER FUNCTIONS ----
         function generateRandomString(length) {
-            let text = '';
-            let possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-            for (let i = 0; i < length; i++) {
-                text += possible.charAt(Math.floor(Math.random() * possible.length));
-            }
-            return text;
+            const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+            const values = crypto.getRandomValues(new Uint8Array(length));
+            return values.reduce((acc, x) => acc + possible[x % possible.length], "");
         }
 
         async function generateCodeChallenge(codeVerifier) {
-            const encoder = new TextEncoder();
-            const data = encoder.encode(codeVerifier);
+            const data = new TextEncoder().encode(codeVerifier);
             const digest = await window.crypto.subtle.digest('SHA-256', data);
             return btoa(String.fromCharCode.apply(null, new Uint8Array(digest)))
                 .replace(/\+/g, '-')
@@ -196,14 +192,12 @@
                 .replace(/=+$/, '');
         }
 
-        // ---- CLOCK SCRIPT ----
         function updateClock() {
             const now = new Date();
             let hours = now.getHours();
             const minutes = String(now.getMinutes()).padStart(2, '0');
             const seconds = String(now.getSeconds()).padStart(2, '0');
             
-            const ampm = hours >= 12 ? 'PM' : 'AM';
             hours = hours % 12;
             hours = hours ? hours : 12; 
             const formattedHours = String(hours).padStart(2, '0');
@@ -216,16 +210,36 @@
         setInterval(updateClock, 1000);
         updateClock();
 
-        // ---- SPOTIFY AUTH & API ----
+        async function redirectToAuth() {
+            const codeVerifier = generateRandomString(64);
+            const codeChallenge = await generateCodeChallenge(codeVerifier);
+            window.localStorage.setItem('spotify_code_verifier', codeVerifier);
+
+            const authUrl = new URL("https://accounts.spotify.com/authorize");
+            const params = {
+                response_type: 'code',
+                client_id: CLIENT_ID,
+                scope: SCOPES,
+                code_challenge_method: 'S256',
+                code_challenge: codeChallenge,
+                redirect_uri: REDIRECT_URI,
+            };
+
+            authUrl.search = new URLSearchParams(params).toString();
+            window.location.href = authUrl.toString();
+        }
+
+        document.getElementById('loginBtn').addEventListener('click', redirectToAuth);
+
         window.onload = async function() {
             const urlParams = new URLSearchParams(window.location.search);
             const code = urlParams.get('code');
 
             if (code) {
-                // We received the auth code via PKCE (response_type=code)
                 const codeVerifier = localStorage.getItem('spotify_code_verifier');
                 await exchangeCodeForToken(code, codeVerifier);
-                window.history.replaceState({}, document.title, window.location.pathname); // Clean URL
+                // Clean code parameter from URL
+                window.history.replaceState({}, document.title, window.location.pathname);
             }
 
             if (accessToken) {
@@ -233,14 +247,6 @@
                 document.getElementById('spotifyWidget').classList.remove('hidden');
                 fetchCurrentPlayback();
                 setInterval(fetchCurrentPlayback, 3000);
-            } else {
-                // Prepare login link using response_type=code with PKCE
-                const codeVerifier = generateRandomString(128);
-                localStorage.setItem('spotify_code_verifier', codeVerifier);
-                const codeChallenge = await generateCodeChallenge(codeVerifier);
-
-                const authUrl = `https://accounts.spotify.com/authorize?client_id=${CLIENT_ID}&response_type=code&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}&code_challenge_method=S256&code_challenge=${codeChallenge}`;
-                document.getElementById('loginLink').href = authUrl;
             }
         };
 
